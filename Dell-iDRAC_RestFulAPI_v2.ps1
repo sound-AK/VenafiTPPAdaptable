@@ -84,8 +84,8 @@ function Generate-CSR
         throw "Missing required values: {0}" -f $($missing -join ",")
     }
 
-# M nage dans les cha nes de caract res
-    IF( $MaTrace ) { Write-VenafiDebug -Message ""; Write-VenafiDebug -Message "Sanitize string (D but)" }
+# Generate iDRAC CSR
+    Write-VenafiDebug -Message "Sanitize string (Start)"
     $cn      = Sanitize-String "Common Name" $Specific.SubjectDn.CN
     $ou      = @() + $($Specific.SubjectDn.OU | ? {$_})
     $ou      = Sanitize-String "Organizational Unit" $ou[0]
@@ -93,42 +93,51 @@ function Generate-CSR
     $city    = Sanitize-String "City" $Specific.SubjectDn.L
     $state   = Sanitize-String "State" $Specific.SubjectDn.ST
     $country = Sanitize-String "Country" $Specific.SubjectDn.C
-    IF( $MaTrace ) { Write-VenafiDebug -Message "Sanitize string (Compl t )"}
+    Write-VenafiDebug -Message "Sanitize string (Completed), the CommonName is $cn, the Org.Unit is $ou, the organization is $org, the city is $city, the state is $state & the country is $country"
     try {
         $Rep_OuvSes = New_iDRACSession $addr, $user, $pass
     }
     catch {
-        Write-VenafiDebug -Message -ForegroundColor yellow ( "Failed : $_" )
+        Write-VenafiDebug -Message "Failed : $_"
         return @{ Result="Failed"; Pkcs10=$NULL; AssetName="Not Applicable" }
     }
 
     $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
 #    $headers.Add("OData-Version", "4.0")
     $headers.Add("Content-Type", "application/json")
-    $headers.Add("X-Auth-Token", $Rep_OuvSes.Headers.'X-Auth-Token' )
+    $headers.Add("X-Auth-Token", $Rep_OuvSes.'X-Auth-Token' )
 
-    $body = @{
-#        "Action"     = "GenerateCSR"
-        "Country"    = $country
-        "State"      = $state
-        "City"       = $city
-        "OrgName"    = $org
-        "OrgUnit"    = $ou
-        "CommonName" = $cn
-        "IncludeIP"  = $true
-    } | ConvertTo-Json
+    $body = @{"CertificateCollection"=@{"@odata.id"="/redfish/v1/Managers/iDRAC.Embedded.1/NetworkProtocol/HTTPS/Certificates"};"City"=$city;"CommonName" = $cn;"Country"=$country;"Organization"=$org;"OrganizationalUnit"=$ou;"State"=$state}
+    if ($email)
+    {
+    $body["Email"] = $email
+    }
+    if ($subject_alt_name)
+    {
+    $body["AlternativeNames"] = [array]($subject_alt_name)
+    }
 
+    $Body = $body | ConvertTo-Json -Compress
+    
+    Write-VenafiDebug -Message "The body is $body"
 
     $LienPOST = "https://" + $addr + "/redfish/v1/CertificateService/Actions/CertificateService.GenerateCSR/"
+
     try {
-        IF( $MaTrace ) { Write-VenafiDebug -Message ""; Write-VenafiDebug -Message "Generation of the request to obtain the CSR (Start)" }
-        $Rep_Post = Invoke-RestMethod -Uri $LienPOST -Method 'POST' -Headers $headers -Body $body -Verbose
+        Write-VenafiDebug -Message "Generation of the request to obtain the CSR (Start)"
+        Ignore-SSLCertificates
+        $result = Invoke-WebRequest -UseBasicParsing -Uri $LienPOST -Method Post -Body $Body -ContentType 'application/json' -Headers $headers -ErrorVariable RespErr
+        $result | Write-VenafiDebug
+        $get_result = $result.Content | ConvertFrom-Json
+        $CSR_TEXT = $get_result.CSRString
     }
     catch {
-        Write-VenafiDebug -Message -ForegroundColor yellow ( "Failed : $_" )
+        Write-VenafiDebug -Message "Failed : $_"
         return @{ Result="Failed"; Pkcs10=$NULL; AssetName="Not Applicable" }
     }
-    IF( $MaTrace ) { Write-VenafiDebug -Message "Generation of the request to obtain the CSR (Complete)" }
+
+    Write-VenafiDebug -Message "Generation of the request to obtain the CSR (Complete)"
+    return @{ Result="Success"; Pkcs10=$CSR_TEXT; AssetName="Not Applicable" }
 
 # Waiting loop for CSR generation; if required
 
@@ -137,17 +146,17 @@ function Generate-CSR
     # Number of recovery attempts
     $CTR = 0
     $CSR = $Null
-    IF( $MaTrace ) { Write-VenafiDebug -Message "" }
+    Write-VenafiDebug -Message ""
     DO {
         $CTR = $CTR + 1 # Number of attempts plus 1
 
         # Recovery of generated CSR
         try {
-            IF( $MaTrace ) { Write-VenafiDebug -Message "CSR recovery - Attempt #" $CTR }
-            $CSR = Invoke-RestMethod -Uri $LienGet -Method 'GET' -Headers $headers -Verbose
+            Write-VenafiDebug -Message "CSR recovery - Attempt #" $CTR
+            $CSR = Invoke-WebRequest -UseBasicParsing -Uri $LienGet -Method Get -Body $Body -ContentType 'application/json' -Headers $headers -ErrorVariable RespErr
         }
         catch {
-            Write-VenafiDebug -Message -ForegroundColor yellow ( "Failed : $_" )
+            Write-VenafiDebug -Message "Failed : $_"
             return @{ Result="Failed"; Pkcs10=$NULL; AssetName="Not Applicable" }
         }
 <#
@@ -157,12 +166,12 @@ function Generate-CSR
 #>
     } While ( [string]::IsNullOrEmpty( $CSR.CertificateSigningRequest ) )
     
-# Returns the appropriate value
-    IF( $MaTrace ) { Write-VenafiDebug -Message "CSR Recovery - Complete in" $CTR "Attempts" }
+#   Returns the appropriate value
+    Write-VenafiDebug -Message "CSR Recovery - Complete in" $CTR "Attempts"
 
-#    $CSR_OUT = $CSR.CertificateSigningRequest | ConvertTo-Json
+#   $CSR_OUT = $CSR.CertificateSigningRequest | ConvertTo-Json
     $CSR_OUT = $CSR.CertificateSigningRequest
-    IF( $MaTrace ) { Write-VenafiDebug -Message "CSR :" $CSR.CertificateSigningRequest }
+    Write-VenafiDebug -Message "CSR :" $CSR.CertificateSigningRequest
 
     return @{ Result="Success"; Pkcs10=$CSR_OUT; AssetName="Not Applicable" }
 }
@@ -207,16 +216,18 @@ function Install-Certificate
     $addr = $General.HostAddress
     $user = $General.UserName
     $pass = $General.UserPass
+    $p12 = $Specific.Pkcs12
+    $encPass = $Specific.EncryptPass
 
-    <#if ( $Specific.Pkcs12 )
+    if ( $Specific.Pkcs12 )
     {
         throw "'Generate Key/CSR on Application' must be set to 'Yes' to provision this certificate."
-    }#>
+    }
 
     try {
+        Write-VenafiDebug -Message "The login address is $addr, the username is $user & the password is $pass"
         $Rep_OuvSes = New_iDRACSession $addr, $user, $pass
         $Rep_OuvSes | Write-VenafiDebug
-
     }
     catch {
         Write-VenafiDebug -Message "Failed : $_"
@@ -227,18 +238,21 @@ function Install-Certificate
     $headers.Add("Content-Type", "application/json")
     $headers.Add("X-Auth-Token", $Rep_OuvSes.'X-Auth-Token' )
 
-    $filecontent = Get-Content $Specific.Pkcs12 -Encoding Byte
+    $filecontent = Get-Content $p12 -Encoding Byte
+
+    Write-VenafiDebug -Message "The PKCS#12 file content is $filecontent"
 
     $base64Str = [Convert]::ToBase64String($filecontent)
 
+    Write-VenafiDebug -Message "The base64 string is $base64Str"
+
     $body = @{ "CertificateType"= "CustomCertificate"; "SSLCertificateFile" = $base64Str } 
     
-    $body["Passphrase"] = $Specific.EncryptPass
+    $body["Passphrase"] = $encPass
     
     $body = $body | ConvertTo-Json -Compress
 
-
-    $LienPOST = "https://" + $addr + "redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.ImportSSLCertificate"
+    $LienPOST = "https://" + $addr +"/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.ImportSSLCertificate"
 
     try {
         Ignore-SSLCertificates
@@ -252,6 +266,7 @@ function Install-Certificate
 
     return @{ Result="Success"; AssetName="Not Applicable" }
 }
+
 
 
 <######################################################################################################################
@@ -505,7 +520,7 @@ function Remove-Certificate
 
 function New_iDRACSession {
 
-    IF( $MaTrace ) { Write-VenafiDebug -Message ""; Write-VenafiDebug -Message "Login to" $addr }
+     Write-VenafiDebug -Message "Login to $addr"
 
 # Allows all tls formats
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::TLS12
@@ -538,20 +553,20 @@ function New_iDRACSession {
         [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
     }
 
-        $user = $idrac_username
-        $pass = $idrac_password
-        $addr = $idrac_ip
+        $user = $user
+        $pass = $pass
+        $addr = $addr
         $secpasswd = ConvertTo-SecureString $pass -AsPlainText -Force
         $credential = New-Object System.Management.Automation.PSCredential($user, $secpasswd)
 
     function get_redfish_version {
-        $uri = "https://$idrac_ip/redfish/v1"
+        $uri = "https://$addr/redfish/v1"
         try {
                 Ignore-SSLCertificates
                 $result = Invoke-WebRequest -Uri $uri -Credential $credential -Method Get -UseBasicParsing -ErrorVariable RespErr -Headers @{"Accept" = "application/json" }
             }
         catch {
-            Write-VenafiDebug -Message
+            Write-VenafiDebug
             $RespErr
             return
         }
@@ -562,10 +577,10 @@ function New_iDRACSession {
     get_redfish_version 
 
     $uri = if ($global:get_redfish_version -ge 160) {
-        "https://$idrac_ip/redfish/v1/SessionService/Sessions"
+        "https://$addr/redfish/v1/SessionService/Sessions"
     }
     elseif ($global:get_redfish_version -lt 160) {
-        "https://$idrac_ip/redfish/v1/Sessions"
+        "https://$addr/redfish/v1/Sessions"
     }
     else {
         Write-VenafiDebug -Message "`n- ERROR, unable to select URI based off Redfish version"
@@ -574,14 +589,14 @@ function New_iDRACSession {
 
     $uri | Write-VenafiDebug
 
-    $body = @{'UserName' = $idrac_username; 'Password' = $idrac_password } | ConvertTo-Json -Compress
+    $body = @{'UserName' = $user; 'Password' = $pass } | ConvertTo-Json -Compress
 
     try {
          Ignore-SSLCertificates
          $result = Invoke-WebRequest -Uri $uri -Body $body -Method Post -UseBasicParsing -ErrorVariable RespErr -Headers @{"Accept" = "application/json" } -ContentType 'application/json'
     }
     catch {
-          Write-VenafiDebug -Message
+          Write-VenafiDebug
           $RespErr
           return
     }
@@ -593,7 +608,7 @@ function New_iDRACSession {
             return
         }
 
-        Write-VenafiDebug -Message "`n- PASS, new iDRAC token session successfully created`n"
+        Write-VenafiDebug "`n- PASS, new iDRAC token session successfully created`n"
         $result.Headers
 }
 
