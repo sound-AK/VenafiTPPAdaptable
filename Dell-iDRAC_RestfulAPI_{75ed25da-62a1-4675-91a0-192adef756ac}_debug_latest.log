@@ -1,0 +1,32 @@
+﻿16/07/2025 22:52:39 : The login address is 10.63.26.87, the username is root & the password is mEk3[Ey~1rjX!&"SVhFB323T+@9Hg%PI]bndMo1]
+
+16/07/2025 22:52:39 : Login to 10.63.26.87
+
+16/07/2025 22:52:40 : https://10.63.26.87/redfish/v1/Sessions
+
+16/07/2025 22:52:40 : 
+- PASS, new iDRAC token session successfully created
+
+
+16/07/2025 22:52:40 : 
+Key                       Value                                       
+---                       -----                                       
+X-Auth-Token              9b05748df89d214e859ee6c2dc2045c3            
+OData-Version             4.0                                         
+X-Frame-Options           DENY                                        
+Strict-Transport-Security max-age=31536000; includeSubDomains; preload
+Content-Length            867                                         
+Cache-Control             no-cache                                    
+Content-Type              application/json; charset=utf-8             
+Date                      Wed, 16 Jul 2025 21:52:40 GMT               
+Location                  /redfish/v1/SessionService/Sessions/54      
+Server                    Apache                                      
+
+
+
+16/07/2025 22:52:40 : The PKCS#12 file content is 
+
+16/07/2025 22:52:40 : The base64 string is 
+
+16/07/2025 22:52:41 : Failed : {"error":{"@Message.ExtendedInfo":[{"Message":"Unable to complete the operation because the value null entered for the property SSLCertificateFile is invalid.","MessageArgs":["null","SSLCertificateFile"],"MessageArgs@odata.count":2,"MessageId":"IDRAC.2.9.SYS425","RelatedProperties":[],"RelatedProperties@odata.count":0,"Resolution":"Enter a valid value for the property in the request body and retry the operation.For information about valid values, see the iDRAC User's Guide available on the support site.","Severity":"Warning"},{"Message":"The value 'null' for the property SSLCertificateFile is of a different type than the property can accept.","MessageArgs":["null","SSLCertificateFile"],"MessageArgs@odata.count":2,"MessageId":"Base.1.12.PropertyValueTypeError","RelatedProperties":[],"RelatedProperties@odata.count":0,"Resolution":"Correct the value for the property in the request body and resubmit the request if the operation failed.","Severity":"Warning"}],"code":"Base.1.12.GeneralError","message":"A general error has occurred. See ExtendedInfo for more information"}}
+
