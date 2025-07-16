@@ -34,7 +34,8 @@ Passwd|Not Used|000
 #>
 
 
-
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$Global:DEBUG_FILE = "D:\Program Files\Venafi\Logs\Dell_iDRAC_RedFishAPI.log"
 
 
 <######################################################################################################################
@@ -108,6 +109,8 @@ function Install-Certificate
     $addr = $General.HostAddress
     $user = $General.UserName
     $pass = $General.UserPass
+    $p12 = $Specific.Pkcs12
+    $encPass = $Specific.EncryptPass
 
     <#if ( $Specific.Pkcs12 )
     {
@@ -115,9 +118,9 @@ function Install-Certificate
     }#>
 
     try {
+        Write-VenafiDebug -Message "The login address is $addr, the username is $user & the password is $pass"
         $Rep_OuvSes = New_iDRACSession $addr, $user, $pass
         $Rep_OuvSes | Write-VenafiDebug
-
     }
     catch {
         Write-VenafiDebug -Message "Failed : $_"
@@ -128,18 +131,21 @@ function Install-Certificate
     $headers.Add("Content-Type", "application/json")
     $headers.Add("X-Auth-Token", $Rep_OuvSes.'X-Auth-Token' )
 
-    $filecontent = Get-Content $Specific.Pkcs12 -Encoding Byte
+    $filecontent = Get-Content $p12 -Encoding Byte
+
+    Write-VenafiDebug -Message "The PKCS#12 file content is $filecontent"
 
     $base64Str = [Convert]::ToBase64String($filecontent)
 
+    Write-VenafiDebug -Message "The base64 string is $base64Str"
+
     $body = @{ "CertificateType"= "CustomCertificate"; "SSLCertificateFile" = $base64Str } 
     
-    $body["Passphrase"] = $Specific.EncryptPass
+    $body["Passphrase"] = $encPass
     
     $body = $body | ConvertTo-Json -Compress
 
-
-    $LienPOST = "https://" + $addr + "redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.ImportSSLCertificate"
+    $LienPOST = "https://" + $addr +"/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.ImportSSLCertificate"
 
     try {
         Ignore-SSLCertificates
@@ -406,7 +412,7 @@ function Remove-Certificate
 
 function New_iDRACSession {
 
-    IF( $MaTrace ) { WRITE-HOST ""; WRITE-HOST "Login to" $addr }
+     Write-VenafiDebug -Message "Login to $addr"
 
 # Allows all tls formats
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::TLS12
@@ -439,20 +445,20 @@ function New_iDRACSession {
         [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
     }
 
-        $user = $idrac_username
-        $pass = $idrac_password
-        $addr = $idrac_ip
+        $user = $user
+        $pass = $pass
+        $addr = $addr
         $secpasswd = ConvertTo-SecureString $pass -AsPlainText -Force
         $credential = New-Object System.Management.Automation.PSCredential($user, $secpasswd)
 
     function get_redfish_version {
-        $uri = "https://$idrac_ip/redfish/v1"
+        $uri = "https://$addr/redfish/v1"
         try {
                 Ignore-SSLCertificates
                 $result = Invoke-WebRequest -Uri $uri -Credential $credential -Method Get -UseBasicParsing -ErrorVariable RespErr -Headers @{"Accept" = "application/json" }
             }
         catch {
-            Write-Host
+            Write-VenafiDebug
             $RespErr
             return
         }
@@ -463,26 +469,26 @@ function New_iDRACSession {
     get_redfish_version 
 
     $uri = if ($global:get_redfish_version -ge 160) {
-        "https://$idrac_ip/redfish/v1/SessionService/Sessions"
+        "https://$addr/redfish/v1/SessionService/Sessions"
     }
     elseif ($global:get_redfish_version -lt 160) {
-        "https://$idrac_ip/redfish/v1/Sessions"
+        "https://$addr/redfish/v1/Sessions"
     }
     else {
-        Write-Host "`n- ERROR, unable to select URI based off Redfish version"
+        Write-VenafiDebug -Message "`n- ERROR, unable to select URI based off Redfish version"
         break
     }
 
     $uri | Write-VenafiDebug
 
-    $body = @{'UserName' = $idrac_username; 'Password' = $idrac_password } | ConvertTo-Json -Compress
+    $body = @{'UserName' = $user; 'Password' = $pass } | ConvertTo-Json -Compress
 
     try {
          Ignore-SSLCertificates
          $result = Invoke-WebRequest -Uri $uri -Body $body -Method Post -UseBasicParsing -ErrorVariable RespErr -Headers @{"Accept" = "application/json" } -ContentType 'application/json'
     }
     catch {
-          Write-Host
+          Write-VenafiDebug
           $RespErr
           return
     }
@@ -494,7 +500,7 @@ function New_iDRACSession {
             return
         }
 
-        Write-Host "`n- PASS, new iDRAC token session successfully created`n"
+        Write-VenafiDebug "`n- PASS, new iDRAC token session successfully created`n"
         $result.Headers
 }
 
