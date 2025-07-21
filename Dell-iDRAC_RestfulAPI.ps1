@@ -106,6 +106,8 @@ function Install-Certificate
         [System.Collections.Hashtable]$Specific
     )
 
+    Write-functionDetail $PSCmdlet.MyInvocation
+
     $addr = $General.HostAddress
     $user = $General.UserName
     $pass = $General.UserPass

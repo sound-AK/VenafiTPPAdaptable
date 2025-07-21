@@ -110,9 +110,8 @@ function Install-Certificate
     $addr = $General.HostAddress
     $user = $General.UserName
     $pass = $General.UserPass
-    $p12 =  $Specific.Pkcs12
+    $p12 = $Specific.Pkcs12
     $encPass = $Specific.EncryptPass
-    $pem = $Specific.CertPem
 
     <#if ( $Specific.Pkcs12 )
     {
@@ -133,42 +132,25 @@ function Install-Certificate
     $headers.Add("Content-Type", "application/json")
     $headers.Add("X-Auth-Token", $Rep_OuvSes.'X-Auth-Token' )
 
-Function ConvertTo-Base64 {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        [System.Collections.ArrayList]
-        $Data
-    )
+    #$filecontent = Get-Content $p12 -Encoding Byte
 
-    "Converting the Pkcs12 certificate representation byte array to Base64 encoded format." | Write-VenafiDebug
-    $output = [System.Convert]::ToBase64String($Data)
-    $output = $output -replace "(.{64})", "`$1`n"
-    $output = $output.TrimEnd("`r`n")
-    return $output
-}
+    #Write-VenafiDebug -Message "The PKCS#12 file content is $filecontent"
 
-    $base64Str = ConvertTo-Base64 -Data $p12
-    <#$paddedStr = do {
-        $base64Str[0..63] -join ''
-        $base64Str = $base64Str[64..$($base64Str.length)]
-    } until ($base64Str.Length -eq 0)#>
+    #$base64Str = [Convert]::ToBase64String($filecontent)
 
-    Write-VenafiDebug -Message "The base64 string is $base64Str"
+    #Write-VenafiDebug -Message "The base64 string is $base64Str"
 
-    $body = @{"CertificateType"= "CustomCertificate"; "SSLCertificateFile" = $base64Str}
+    $body = @{ "CertificateType"= "Server"; "SSLCertificateFile" = $Specific.CertPem } 
     
-    $body["Passphrase"] = $encPass
+    #$body["Passphrase"] = $encPass
     
-    $JSONbody = $body | ConvertTo-Json -Compress
-
-    Write-VenafiDebug -Message "The body is $JSONbody"
+    $body = $body | ConvertTo-Json -Compress
 
     $LienPOST = "https://" + $addr +"/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.ImportSSLCertificate"
 
     try {
         Ignore-SSLCertificates
-        $Rep_Post = Invoke-WebRequest -UseBasicParsing -Uri $LienPOST -Method Post -Body $JSONbody -ContentType 'application/json' -Headers $headers -ErrorVariable RespErr
+        $Rep_Post = Invoke-RestMethod -Uri $LienPOST -Method 'POST' -Headers $headers -Body $body -Verbose
         $Rep_Post | Write-VenafiDebug
     }
     catch {

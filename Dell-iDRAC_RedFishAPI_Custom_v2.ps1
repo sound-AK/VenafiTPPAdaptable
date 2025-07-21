@@ -169,13 +169,15 @@ Function ConvertTo-Base64 {
     try {
         Ignore-SSLCertificates
         $Rep_Post = Invoke-WebRequest -UseBasicParsing -Uri $LienPOST -Method Post -Body $JSONbody -ContentType 'application/json' -Headers $headers -ErrorVariable RespErr
-        $Rep_Post | Write-VenafiDebug
     }
     catch {
-        Write-VenafiDebug -Message "Failed : $_"
+        Write-VenafiDebug -Message "Failed : $RespErr"
         return @{ Result="Failed"; AssetName="Not Applicable" }
     }
-
+    if ($Rep_Post.StatusCode -eq 200 -or $Rep_Post.StatusCode -eq 202)
+    {
+    [String]::Format("-PASS,{0} SSL Cert Operation passed")
+    }
     return @{ Result="Success"; AssetName="Not Applicable" }
 }
 

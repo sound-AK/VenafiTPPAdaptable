@@ -34,6 +34,9 @@ Passwd|Not Used|000
 #>
 
 
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$Global:DEBUG_FILE = "D:\Program Files\Venafi\Logs\Dell_iDRAC_RedFishAPI.log"
+
 
 <######################################################################################################################
 .NAME
@@ -599,6 +602,7 @@ Function Write-FunctionDetail {
     }
 }
 
+
 function Write-VenafiDebug {
 
     <#
@@ -636,9 +640,6 @@ function Write-VenafiDebug {
         [psobject] $Message,
 
         [Parameter()]
-        [string] $Intro,
-
-        [Parameter()]
         [switch] $ThrowException
     )
 
@@ -648,67 +649,11 @@ function Write-VenafiDebug {
             return
         }
 
-        $newMessage = switch ($Message.GetType().FullName) {
-            'System.Collections.Hashtable' {
-                Set-SecretsToHidden $Message | ConvertTo-Json -Depth 5
-            }
-
-            'System.String' {
-                $Message
-            }
-
-            'System.Management.Automation.ErrorRecord' {
-                # powershell specific exception
-                $err = $Message
-                $ex = $err.Exception
-                $inv = $err.InvocationInfo
-                $logEntry = @{
-                    Message          = $ex.Message
-                    ErrorId          = $err.FullyQualifiedErrorId
-                    Category         = $err.CategoryInfo.Category
-                    TargetObject     = $err.TargetObject
-                    ScriptName       = $inv.ScriptName
-                    LineNumber       = $inv.ScriptLineNumber
-                    Line             = $inv.Line
-                    Position         = $inv.PositionMessage
-                    StackTrace       = $ex.StackTrace
-                    ScriptStackTrace = $err.ScriptStackTrace
-                }
-                if ($ex.InnerException) {
-                    $logEntry.InnerExceptionMessage = $ex.InnerException.Message
-                    $logEntry.InnerExceptionType = $ex.InnerException.GetType().FullName
-                }
-                $logEntry | ConvertTo-Json -Depth 3
-            }
-
-            'System.Exception' {
-                #.net generic exception
-                $ex = $Message
-                $inv = $ex.InvocationInfo
-                $logEntry = @{
-                    Message       = $ex.Message
-                    ExceptionType = $ex.GetType().FullName
-                    ScriptName    = $inv.ScriptName
-                    LineNumber    = $inv.ScriptLineNumber
-                    Line          = $inv.Line
-                    Position      = $inv.PositionMessage
-                    StackTrace    = $ex.StackTrace
-                }
-                if ($ex.InnerException) {
-                    $logEntry.InnerExceptionMessage = $ex.InnerException.Message
-                    $logEntry.InnerExceptionType = $ex.InnerException.GetType().FullName
-                }
-
-                $logEntry | ConvertTo-Json -Depth 3
-            }
-
-            default {
-                $Message | ConvertTo-Json -Depth 3
-            }
+        $newMessage = if ( $Message -is [hashtable] ) {
+            Set-SecretsToHidden $Message | ConvertTo-Json -Depth 5
         }
-
-        if ( $Intro ) {
-            $newMessage = "$Intro`r`n$newMessage"
+        else {
+            $Message
         }
 
         try {
@@ -735,6 +680,7 @@ function Write-VenafiDebug {
     }
 }
 
+
 function Set-SecretsToHidden {
 
     <#
@@ -756,22 +702,14 @@ function Set-SecretsToHidden {
 
         $secrets = @('UserPass', 'AuxPass', 'PfxPass', 'Certificate', 'PfxData', 'Password', 'AuxPfxData', 'PrivKeyPem', 'Pkcs12', 'EncryptPass', 'ChainPkcs7', 'PrivKeyPemEncrypted', 'VarPass')
 
-        # if needed, add additional secrets specific to this integration to be hidden
-        # $secrets += '', ''
-
         if ($InputObject -is [hashtable]) {
             $clone = @{}
             foreach ($key in $InputObject.keys) {
-                if ( [string]::IsNullOrEmpty($InputObject[$key]) ) {
-                    $clone[$key] = ''
+                if ($key -in $secrets -and $null -ne $InputObject[$key] ) {
+                    $clone[$key] = '***hidden***'
                 }
                 else {
-                    if ($key -in $secrets ) {
-                        $clone[$key] = '***hidden***'
-                    }
-                    else {
-                        $clone[$key] = Set-SecretsToHidden $InputObject[$key]
-                    }
+                    $clone[$key] = Set-SecretsToHidden $InputObject[$key]
                 }
             }
             return $clone
@@ -781,7 +719,6 @@ function Set-SecretsToHidden {
         }
     }
 }
- 
 
 
 #############################   Function to ignore SSL certs ##################################

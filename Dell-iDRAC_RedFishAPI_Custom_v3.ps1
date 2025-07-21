@@ -120,9 +120,7 @@ function Install-Certificate
     }#>
 
     try {
-        Write-VenafiDebug -Message "The login address is $addr, the username is $user & the password is $pass"
         $Rep_OuvSes = New_iDRACSession $addr, $user, $pass
-        $Rep_OuvSes | Write-VenafiDebug
     }
     catch {
         Write-VenafiDebug -Message "Failed : $_"
@@ -154,28 +152,26 @@ Function ConvertTo-Base64 {
         $base64Str = $base64Str[64..$($base64Str.length)]
     } until ($base64Str.Length -eq 0)#>
 
-    Write-VenafiDebug -Message "The base64 string is $base64Str"
-
     $body = @{"CertificateType"= "CustomCertificate"; "SSLCertificateFile" = $base64Str}
     
     $body["Passphrase"] = $encPass
     
     $JSONbody = $body | ConvertTo-Json -Compress
 
-    Write-VenafiDebug -Message "The body is $JSONbody"
-
     $LienPOST = "https://" + $addr +"/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.ImportSSLCertificate"
 
     try {
         Ignore-SSLCertificates
         $Rep_Post = Invoke-WebRequest -UseBasicParsing -Uri $LienPOST -Method Post -Body $JSONbody -ContentType 'application/json' -Headers $headers -ErrorVariable RespErr
-        $Rep_Post | Write-VenafiDebug
     }
     catch {
-        Write-VenafiDebug -Message "Failed : $_"
+        Write-VenafiDebug -Message "Failed : $RespErr"
         return @{ Result="Failed"; AssetName="Not Applicable" }
     }
-
+    if ($Rep_Post.StatusCode -eq 200 -or $Rep_Post.StatusCode -eq 202)
+    {
+    [String]::Format("-PASS,{0} SSL Cert Operation passed")
+    }
     return @{ Result="Success"; AssetName="Not Applicable" }
 }
 
