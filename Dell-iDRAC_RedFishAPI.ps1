@@ -34,9 +34,6 @@ Passwd|Not Used|000
 #>
 
 
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$Global:DEBUG_FILE = "D:\Program Files\Venafi\Logs\Dell_iDRAC_RedFishAPI.log"
-
 
 <######################################################################################################################
 .NAME
@@ -113,8 +110,9 @@ function Install-Certificate
     $addr = $General.HostAddress
     $user = $General.UserName
     $pass = $General.UserPass
-    $p12 = $Specific.Pkcs12
+    $p12 =  $Specific.Pkcs12
     $encPass = $Specific.EncryptPass
+    $pem = $Specific.CertPem
 
     <#if ( $Specific.Pkcs12 )
     {
@@ -122,9 +120,7 @@ function Install-Certificate
     }#>
 
     try {
-        Write-VenafiDebug -Message "The login address is $addr, the username is $user & the password is $pass"
         $Rep_OuvSes = New_iDRACSession $addr, $user, $pass
-        $Rep_OuvSes | Write-VenafiDebug
     }
     catch {
         Write-VenafiDebug -Message "Failed : $_"
@@ -135,32 +131,47 @@ function Install-Certificate
     $headers.Add("Content-Type", "application/json")
     $headers.Add("X-Auth-Token", $Rep_OuvSes.'X-Auth-Token' )
 
-    $filecontent = Get-Content $p12 -Encoding Byte
+Function ConvertTo-Base64 {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [System.Collections.ArrayList]
+        $Data
+    )
 
-    Write-VenafiDebug -Message "The PKCS#12 file content is $filecontent"
+    "Converting the Pkcs12 certificate representation byte array to Base64 encoded format." | Write-VenafiDebug
+    $output = [System.Convert]::ToBase64String($Data)
+    $output = $output -replace "(.{64})", "`$1`n"
+    $output = $output.TrimEnd("`r`n")
+    return $output
+}
 
-    $base64Str = [Convert]::ToBase64String($filecontent)
+    $base64Str = ConvertTo-Base64 -Data $p12
+    <#$paddedStr = do {
+        $base64Str[0..63] -join ''
+        $base64Str = $base64Str[64..$($base64Str.length)]
+    } until ($base64Str.Length -eq 0)#>
 
-    Write-VenafiDebug -Message "The base64 string is $base64Str"
-
-    $body = @{ "CertificateType"= "CustomCertificate"; "SSLCertificateFile" = $base64Str } 
+    $body = @{"CertificateType"= "CustomCertificate"; "SSLCertificateFile" = $base64Str}
     
     $body["Passphrase"] = $encPass
     
-    $body = $body | ConvertTo-Json -Compress
+    $JSONbody = $body | ConvertTo-Json -Compress
 
     $LienPOST = "https://" + $addr +"/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DelliDRACCardService/Actions/DelliDRACCardService.ImportSSLCertificate"
 
     try {
         Ignore-SSLCertificates
-        $Rep_Post = Invoke-RestMethod -Uri $LienPOST -Method 'POST' -Headers $headers -Body $body -Verbose
-        $Rep_Post | Write-VenafiDebug
+        $Rep_Post = Invoke-WebRequest -UseBasicParsing -Uri $LienPOST -Method Post -Body $JSONbody -ContentType 'application/json' -Headers $headers -ErrorVariable RespErr
     }
     catch {
-        Write-VenafiDebug -Message "Failed : $_"
+        Write-VenafiDebug -Message "Failed : $RespErr"
         return @{ Result="Failed"; AssetName="Not Applicable" }
     }
-
+    if ($Rep_Post.StatusCode -eq 200 -or $Rep_Post.StatusCode -eq 202)
+    {
+    [String]::Format("-PASS,{0} SSL Cert Operation passed")
+    }
     return @{ Result="Success"; AssetName="Not Applicable" }
 }
 
@@ -602,7 +613,6 @@ Function Write-FunctionDetail {
     }
 }
 
-
 function Write-VenafiDebug {
 
     <#
@@ -640,6 +650,9 @@ function Write-VenafiDebug {
         [psobject] $Message,
 
         [Parameter()]
+        [string] $Intro,
+
+        [Parameter()]
         [switch] $ThrowException
     )
 
@@ -649,11 +662,67 @@ function Write-VenafiDebug {
             return
         }
 
-        $newMessage = if ( $Message -is [hashtable] ) {
-            Set-SecretsToHidden $Message | ConvertTo-Json -Depth 5
+        $newMessage = switch ($Message.GetType().FullName) {
+            'System.Collections.Hashtable' {
+                Set-SecretsToHidden $Message | ConvertTo-Json -Depth 5
+            }
+
+            'System.String' {
+                $Message
+            }
+
+            'System.Management.Automation.ErrorRecord' {
+                # powershell specific exception
+                $err = $Message
+                $ex = $err.Exception
+                $inv = $err.InvocationInfo
+                $logEntry = @{
+                    Message          = $ex.Message
+                    ErrorId          = $err.FullyQualifiedErrorId
+                    Category         = $err.CategoryInfo.Category
+                    TargetObject     = $err.TargetObject
+                    ScriptName       = $inv.ScriptName
+                    LineNumber       = $inv.ScriptLineNumber
+                    Line             = $inv.Line
+                    Position         = $inv.PositionMessage
+                    StackTrace       = $ex.StackTrace
+                    ScriptStackTrace = $err.ScriptStackTrace
+                }
+                if ($ex.InnerException) {
+                    $logEntry.InnerExceptionMessage = $ex.InnerException.Message
+                    $logEntry.InnerExceptionType = $ex.InnerException.GetType().FullName
+                }
+                $logEntry | ConvertTo-Json -Depth 3
+            }
+
+            'System.Exception' {
+                #.net generic exception
+                $ex = $Message
+                $inv = $ex.InvocationInfo
+                $logEntry = @{
+                    Message       = $ex.Message
+                    ExceptionType = $ex.GetType().FullName
+                    ScriptName    = $inv.ScriptName
+                    LineNumber    = $inv.ScriptLineNumber
+                    Line          = $inv.Line
+                    Position      = $inv.PositionMessage
+                    StackTrace    = $ex.StackTrace
+                }
+                if ($ex.InnerException) {
+                    $logEntry.InnerExceptionMessage = $ex.InnerException.Message
+                    $logEntry.InnerExceptionType = $ex.InnerException.GetType().FullName
+                }
+
+                $logEntry | ConvertTo-Json -Depth 3
+            }
+
+            default {
+                $Message | ConvertTo-Json -Depth 3
+            }
         }
-        else {
-            $Message
+
+        if ( $Intro ) {
+            $newMessage = "$Intro`r`n$newMessage"
         }
 
         try {
@@ -680,7 +749,6 @@ function Write-VenafiDebug {
     }
 }
 
-
 function Set-SecretsToHidden {
 
     <#
@@ -702,14 +770,22 @@ function Set-SecretsToHidden {
 
         $secrets = @('UserPass', 'AuxPass', 'PfxPass', 'Certificate', 'PfxData', 'Password', 'AuxPfxData', 'PrivKeyPem', 'Pkcs12', 'EncryptPass', 'ChainPkcs7', 'PrivKeyPemEncrypted', 'VarPass')
 
+        # if needed, add additional secrets specific to this integration to be hidden
+        # $secrets += '', ''
+
         if ($InputObject -is [hashtable]) {
             $clone = @{}
             foreach ($key in $InputObject.keys) {
-                if ($key -in $secrets -and $null -ne $InputObject[$key] ) {
-                    $clone[$key] = '***hidden***'
+                if ( [string]::IsNullOrEmpty($InputObject[$key]) ) {
+                    $clone[$key] = ''
                 }
                 else {
-                    $clone[$key] = Set-SecretsToHidden $InputObject[$key]
+                    if ($key -in $secrets ) {
+                        $clone[$key] = '***hidden***'
+                    }
+                    else {
+                        $clone[$key] = Set-SecretsToHidden $InputObject[$key]
+                    }
                 }
             }
             return $clone
@@ -719,6 +795,7 @@ function Set-SecretsToHidden {
         }
     }
 }
+ 
 
 
 #############################   Function to ignore SSL certs ##################################
